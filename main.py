@@ -8,31 +8,59 @@ from tensorflow.python.client import device_lib
 
 def assignment2():
     print(check_gpu())
-    # # Hyperparameters
-    # latent_space_dimensions = 100
-    # episodes = 100
-    # batch = 256
-    #
-    # # Discriminator
-    # discriminator_model = create_discriminator()
-    # dataset = load_real_samples()
-    # #train_discriminator(discriminator_model, dataset)
-    #
-    # # Generator
-    # generator_model = create_generator(latent_space_dimensions)
-    #
-    # # GAN
-    # gan_model = create_gan(generator_model, discriminator_model)
-    #
-    # # Training
-    # train(generator_model, discriminator_model, gan_model, dataset, latent_space_dimensions, episodes, batch)
-    #
-    # plt.show()
+    # Hyperparameters
+    latent_space_dim = 100
+    episodes = 100
+    batch = 256
+
+    # Discriminator
+    discriminator_model = create_discriminator()
+    dataset = load_real_samples()
+    # train_discriminator(discriminator_model, dataset)
+
+    # Generator
+    generator_model = create_generator(latent_space_dim)
+
+    # GAN
+    gan_model = create_gan(generator_model, discriminator_model)
+
+    # Training
+    train(generator_model, discriminator_model, gan_model, dataset, latent_space_dim, episodes, batch)
+
+    plt.show()
 
 
 def check_gpu():
     local_device_protos = device_lib.list_local_devices()
     return [x.name for x in local_device_protos if x.device_type == 'GPU']
+
+
+def summarize_performance(episode, generator_model, discriminator_model, dataset, latent_space_dim, samples=100):
+    x_real, y_real = generate_real_samples(dataset, samples)
+    x_fake, y_fake = generate_fake_samples(generator_model, latent_space_dim, samples)
+
+    # Evaluate discriminator model on real samples
+    _, accuracy_real = discriminator_model.evaluate(x_real, y_real, verbose=0)
+
+    # Evaluate discriminator model on fake samples
+    _, accuracy_fake = discriminator_model.evaluate(x_fake, y_fake, verbose=0)
+
+    print(f'Real samples accuracy: {accuracy_real * 100}%  Fake samples accuracy: {accuracy_fake * 100}%')
+
+    save_plot(x_fake, episode)
+    filename = f'generator_model_{episode+1}.h5'
+    generator_model.save(filename)
+    plt.close()
+
+
+def save_plot(examples, episode, n=10):
+    for i in range(n * n):
+        plt.subplot(n, n, 1 + i)
+        plt.axis('off')
+        plt.imshow(examples[i, :, :, 0], cmap='gray_r')
+    filename = f'generated_plot_episode_{episode+1}.png'
+    plt.savefig(filename)
+    plt.close()
 
 
 def load_real_samples():
@@ -50,16 +78,16 @@ def generate_real_samples(dataset, samples):
     return x, y
 
 
-def generate_fake_samples(generator_model, latent_dimensions, samples):
-    points = generate_latent_points(latent_dimensions, samples)
+def generate_fake_samples(generator_model, latent_space_dim, samples):
+    points = generate_latent_points(latent_space_dim, samples)
     x = generator_model.predict(points)
     y = np.zeros((samples, 1))
     return x, y
 
 
-def generate_latent_points(latent_dimensions, samples):
-    points = np.random.randn(latent_dimensions * samples)
-    points = points.reshape(samples, latent_dimensions)
+def generate_latent_points(latent_space_dim, samples):
+    points = np.random.randn(latent_space_dim * samples)
+    points = points.reshape(samples, latent_space_dim)
     return points
 
 
@@ -146,31 +174,34 @@ def train_discriminator(model, dataset, episodes=100, batch=256):
         print(f'Episode: {episode + 1}: Real = {real_accuracy * 100}   Fake = {fake_accuracy * 100}')
 
 
-def train_gan(gan_model, latent_space_dimensions, episodes=100, batch=256):
+def train_gan(gan_model, latent_space_dim, episodes=100, batch=256):
     for episode in range(episodes):
-        x_gan = generate_latent_points(latent_space_dimensions, batch)
+        x_gan = generate_latent_points(latent_space_dim, batch)
         y_gan = np.ones((batch, 1))
         gan_model.train_on_batch(x_gan, y_gan)
 
 
-def train(generator_model, discriminator_model, gan_model, dataset, latent_space_dimension, episodes=100, batch=256):
+def train(generator_model, discriminator_model, gan_model, dataset, latent_space_dim, episodes=100, batch=256):
     batch_per_episode = int(dataset.shape[0] / batch)
     half_batch = int(batch / 2)
 
     for episode in range(episodes):
         for i in range(batch_per_episode):
             x_real, y_real = generate_real_samples(dataset, half_batch)
-            x_fake, y_fake = generate_fake_samples(generator_model, latent_space_dimension, half_batch)
+            x_fake, y_fake = generate_fake_samples(generator_model, latent_space_dim, half_batch)
 
             x_discriminator, y_discriminator = np.vstack((x_real, x_fake)), np.vstack((y_real, y_fake))
             discriminator_loss, _ = discriminator_model.train_on_batch(x_discriminator, y_discriminator)
 
-            x_gan = generate_latent_points(latent_space_dimension, batch)
+            x_gan = generate_latent_points(latent_space_dim, batch)
             y_gan = np.ones((batch, 1))
             gan_loss = gan_model.train_on_batch(x_gan, y_gan)
 
-            print(f'Episode {episode + 1}, {i}: Batch per episode: {batch_per_episode}  Discriminator loss: '
+            print(f'Episode {episode + 1}, {i}/{batch_per_episode}  Discriminator loss: '
                   f'{discriminator_loss}    GAN loss: {gan_loss}')
+
+        if (episode+1) % 10 == 0:
+            summarize_performance(episode, generator_model, discriminator_model, dataset, latent_space_dim)
 
 
 if __name__ == '__main__':

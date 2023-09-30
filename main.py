@@ -4,9 +4,80 @@ from keras.datasets.mnist import load_data
 from keras import layers, models, optimizers
 from keras.utils import plot_model
 from tensorflow.python.client import device_lib
+import pretty_midi
+import os
+import pygame
 
 
 def assignment2():
+    # ---CLASS EXERCISE---
+    # tutorial()
+
+    # ---ASSIGNMENT---
+    # Get path of all MIDI files in directory
+    root_directory = "clean_midi"
+    filepaths = []
+    if os.path.exists(root_directory):
+        filepaths = get_all_filepaths(root_directory)
+    else:
+        print(f"Root directory {root_directory} not valid")
+
+    # Load MIDI files
+    midi_files = []
+    n_files = 1  # len(filepaths)
+    for i in range(n_files):
+        try:
+            midi_files.append(pretty_midi.PrettyMIDI(filepaths[i]))
+            print(f'{((i+1)/n_files)*100}%')
+        except Exception as e:
+            print(f'ERROR READING MIDI FILE: {e}')
+
+    # Play one example MIDI track
+    playback_len = 10
+    pygame.mixer.init()
+    pygame.mixer.music.load(filepaths[0])
+    pygame.mixer.music.play()
+    pygame.time.wait(playback_len * 1000)
+    pygame.mixer.music.stop()
+
+    # Extract features from MIDI file
+    note_numbers = []
+    note_velocities = []
+    note_start_times = []
+    note_durations = []
+    instrument_names = []
+
+    for instrument in midi_files[0].instruments:
+        instrument_name = pretty_midi.program_to_instrument_name(instrument.program)
+        for note in instrument.notes:
+            note_numbers.append(note.pitch)
+            note_velocities.append(note.velocity)
+            note_start_times.append(note.start)
+            note_durations.append(note.end - note.start)
+            instrument_names.append(instrument_name)
+
+    # Print the extracted information
+    for i in range(len(note_numbers)):
+        print(f"Instrument: {instrument_names[i]}, Note {note_numbers[i]} - Velocity: {note_velocities[i]}, "
+              f"Start Time: {note_start_times[i]}, Duration: {note_durations[i]}")
+
+    # midi_data = pretty_midi.PrettyMIDI("clean_midi/311/Down.mid")
+    # print(midi_data)
+    pass
+
+
+def get_all_filepaths(directory):
+    filepaths = []
+
+    for root, directories, files in os.walk(directory):
+        for filename in files:
+            filepath = os.path.join(root, filename)
+            filepaths.append(filepath)
+
+    return filepaths
+
+
+def tutorial():
     print(check_gpu())
     # Hyperparameters
     latent_space_dim = 100

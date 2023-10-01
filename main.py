@@ -1,3 +1,5 @@
+import collections
+
 import numpy as np
 import matplotlib.pyplot as plt
 from keras.datasets.mnist import load_data
@@ -7,13 +9,29 @@ from tensorflow.python.client import device_lib
 import pretty_midi
 import os
 import pygame
+from sklearn import preprocessing
+from enum import IntEnum
+import warnings
+
+warnings.filterwarnings("error")
+
+
+class NoteAttribute(IntEnum):
+    INSTRUMENT = 0
+    NUMBER = 1
+    VELOCITY = 2
+    START_TIME = 3
+    DURATION = 4
+
+
+N_FEATURES = 5
 
 
 def assignment2():
-    # ---CLASS EXERCISE---
+    # --- CLASS EXERCISE ---
     # tutorial()
 
-    # ---ASSIGNMENT---
+    # --- ASSIGNMENT ---
     # Get path of all MIDI files in directory
     root_directory = "clean_midi"
     filepaths = []
@@ -23,47 +41,32 @@ def assignment2():
         print(f"Root directory {root_directory} not valid")
 
     # Load MIDI files
-    midi_files = []
-    n_files = 1  # len(filepaths)
-    for i in range(n_files):
-        try:
-            midi_files.append(pretty_midi.PrettyMIDI(filepaths[i]))
-            print(f'{((i+1)/n_files)*100}%')
-        except Exception as e:
-            print(f'ERROR READING MIDI FILE: {e}')
+    n_files = 5
+    midi_files = load_midi_files(filepaths, n_files)
 
-    # Play one example MIDI track
-    playback_len = 10
-    pygame.mixer.init()
-    pygame.mixer.music.load(filepaths[0])
-    pygame.mixer.music.play()
-    pygame.time.wait(playback_len * 1000)
-    pygame.mixer.music.stop()
+    # Play example MIDI file
+    # play_midi_file(filepaths[0])
 
-    # Extract features from MIDI file
-    note_numbers = []
-    note_velocities = []
-    note_start_times = []
-    note_durations = []
-    instrument_names = []
+    # Extract features from MIDI files
+    notes = extract_features(midi_files)
+    print(notes)
 
-    for instrument in midi_files[0].instruments:
-        instrument_name = pretty_midi.program_to_instrument_name(instrument.program)
-        for note in instrument.notes:
-            note_numbers.append(note.pitch)
-            note_velocities.append(note.velocity)
-            note_start_times.append(note.start)
-            note_durations.append(note.end - note.start)
-            instrument_names.append(instrument_name)
+    # Normalize the features
+    normalized_notes = normalize_features(notes)
+    print(normalized_notes)
 
-    # Print the extracted information
-    for i in range(len(note_numbers)):
-        print(f"Instrument: {instrument_names[i]}, Note {note_numbers[i]} - Velocity: {note_velocities[i]}, "
-              f"Start Time: {note_start_times[i]}, Duration: {note_durations[i]}")
+    # sequences = []
+    # sequence_length = 16
+    # n_sequences = len(song_notes) // sequence_length
+    # for j in range(n_sequences):
+    #     start_index = i * sequence_length
+    #     end_index = (i + 1) * sequence_length
+    #     sequence = songs[i][start_index:end_index]
+    #     sequences.append(sequence)
 
-    # midi_data = pretty_midi.PrettyMIDI("clean_midi/311/Down.mid")
-    # print(midi_data)
-    pass
+
+    # print(sequences)
+    # print(normalized_notes)
 
 
 def get_all_filepaths(directory):
@@ -77,6 +80,76 @@ def get_all_filepaths(directory):
     return filepaths
 
 
+def load_midi_files(filepaths, n_files):
+    midi_files = []
+    current_n_files = 0
+    i = 0
+    while current_n_files < n_files:
+        try:
+            midi_files.append(pretty_midi.PrettyMIDI(filepaths[i]))
+            print(f'{((current_n_files + 1) / n_files) * 100}%')
+            current_n_files += 1
+        except Exception as e:
+            print(f'ERROR READING MIDI FILE: {e}')
+        i += 1
+    return midi_files
+
+
+def play_midi_file(filepath):
+    playback_len = 10
+    pygame.mixer.init()
+    pygame.mixer.music.load(filepath)
+    pygame.mixer.music.play()
+    pygame.time.wait(playback_len * 1000)
+    pygame.mixer.music.stop()
+
+
+def extract_features(midi_files):
+    notes = []
+    for file in midi_files:
+        for instrument in file.instruments:
+            if instrument.is_drum:
+                continue
+            instrument_id = instrument.program
+            for note in instrument.notes:
+                current_note = np.zeros(N_FEATURES)
+                current_note[NoteAttribute.INSTRUMENT] = int(instrument_id)
+                current_note[NoteAttribute.NUMBER] = note.pitch
+                current_note[NoteAttribute.VELOCITY] = note.velocity
+                current_note[NoteAttribute.START_TIME] = note.start
+                current_note[NoteAttribute.DURATION] = note.end - note.start
+                notes.append(current_note)
+
+    return np.array(notes)
+
+
+def normalize_features(notes):
+    # Normalize the data
+    scaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
+    instrument_ids = notes[:, NoteAttribute.INSTRUMENT]
+    normalized_instrument_ids = scaler.fit_transform(instrument_ids.reshape(-1, 1)).ravel()
+    note_numbers = notes[:, NoteAttribute.NUMBER]
+    normalized_note_numbers = scaler.fit_transform(note_numbers.reshape(-1, 1)).ravel()
+    note_start_times = notes[:, NoteAttribute.START_TIME]
+    normalized_start_times = scaler.fit_transform(note_start_times.reshape(-1, 1)).ravel()
+    note_durations = notes[:, NoteAttribute.DURATION]
+    normalized_durations = scaler.fit_transform((note_durations.reshape(-1, 1))).ravel()
+    for note in notes:
+        if note[NoteAttribute.VELOCITY] > 0:
+            note[NoteAttribute.VELOCITY] = 1
+        else:
+            note[NoteAttribute.VELOCITY] = 0
+
+    normalized_notes = np.column_stack((
+        normalized_instrument_ids, normalized_note_numbers, notes[:, NoteAttribute.VELOCITY],
+        normalized_start_times, normalized_durations))
+
+    return normalized_notes
+
+
+# --------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------- CLASS EXERCISE -----------------------------------------------
+# --------------------------------------------------------------------------------------------------------------
 def tutorial():
     print(check_gpu())
     # Hyperparameters
@@ -119,7 +192,7 @@ def summarize_performance(episode, generator_model, discriminator_model, dataset
     print(f'Real samples accuracy: {accuracy_real * 100}%  Fake samples accuracy: {accuracy_fake * 100}%')
 
     save_plot(x_fake, episode)
-    filename = f'generator_model_{episode+1}.h5'
+    filename = f'generator_model_{episode + 1}.h5'
     generator_model.save(filename)
     plt.close()
 
@@ -129,7 +202,7 @@ def save_plot(examples, episode, n=10):
         plt.subplot(n, n, 1 + i)
         plt.axis('off')
         plt.imshow(examples[i, :, :, 0], cmap='gray_r')
-    filename = f'generated_plot_episode_{episode+1}.png'
+    filename = f'generated_plot_episode_{episode + 1}.png'
     plt.savefig(filename)
     plt.close()
 
@@ -271,7 +344,7 @@ def train(generator_model, discriminator_model, gan_model, dataset, latent_space
             print(f'Episode {episode + 1}, {i}/{batch_per_episode}  Discriminator loss: '
                   f'{discriminator_loss}    GAN loss: {gan_loss}')
 
-        if (episode+1) % 10 == 0:
+        if (episode + 1) % 10 == 0:
             summarize_performance(episode, generator_model, discriminator_model, dataset, latent_space_dim)
 
 

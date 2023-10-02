@@ -13,23 +13,24 @@ from sklearn import preprocessing
 from enum import IntEnum
 import warnings
 
-warnings.filterwarnings("error")
+warnings.filterwarnings("error")    # To avoid loading corrupted MIDI files
+np.random.seed(0)   # For reproduction of results
 
 
 class NoteAttribute(IntEnum):
-    INSTRUMENT = 0
-    NUMBER = 1
-    VELOCITY = 2
-    START_TIME = 3
-    DURATION = 4
+    NUMBER = 0
+    VELOCITY = 1
+    START_TIME = 2
+    DURATION = 3
 
 
-N_FEATURES = 5
+N_FEATURES = len(NoteAttribute)
 
 
 def assignment2():
     # --- CLASS EXERCISE ---
     # tutorial()
+    # ----------------------
 
     # --- ASSIGNMENT ---
     # Get path of all MIDI files in directory
@@ -41,32 +42,30 @@ def assignment2():
         print(f"Root directory {root_directory} not valid")
 
     # Load MIDI files
-    n_files = 5
+    n_files = 2
     midi_files = load_midi_files(filepaths, n_files)
 
-    # Play example MIDI file
-    # play_midi_file(filepaths[0])
+    # Create sequences of fixed amount of notes
+    sequence_length = 16
+    sequences = create_sequences(midi_files, sequence_length)
 
-    # Extract features from MIDI files
-    notes = extract_features(midi_files)
-    print(notes)
+    # Play example sequence
+    # sequence_midi = create_midi_sequence(sequences[0])
+    # sequence_filepath = "first_sequence_example.mid"
+    # sequence_midi.write(sequence_filepath)
+    # play_midi_file(sequence_filepath)
 
     # Normalize the features
-    normalized_notes = normalize_features(notes)
-    print(normalized_notes)
+    normalized_notes = normalize_features(sequences)
+    normalized_sequences = []
+    i = 0
+    while i < len(normalized_notes):
+        normalized_sequences.append(normalized_notes[i:i+sequence_length])
+        i += sequence_length
+    normalized_sequences = np.array(normalized_sequences)
 
-    # sequences = []
-    # sequence_length = 16
-    # n_sequences = len(song_notes) // sequence_length
-    # for j in range(n_sequences):
-    #     start_index = i * sequence_length
-    #     end_index = (i + 1) * sequence_length
-    #     sequence = songs[i][start_index:end_index]
-    #     sequences.append(sequence)
-
-
-    # print(sequences)
-    # print(normalized_notes)
+    random_samples = generate_real_samples(normalized_sequences, 5)
+    print(random_samples)
 
 
 def get_all_filepaths(directory):
@@ -87,6 +86,7 @@ def load_midi_files(filepaths, n_files):
     while current_n_files < n_files:
         try:
             midi_files.append(pretty_midi.PrettyMIDI(filepaths[i]))
+            print(f"READING FILE: {filepaths[i]}")
             print(f'{((current_n_files + 1) / n_files) * 100}%')
             current_n_files += 1
         except Exception as e:
@@ -95,55 +95,111 @@ def load_midi_files(filepaths, n_files):
     return midi_files
 
 
+def create_midi_sequence(notes):
+    midi_sequence = pretty_midi.PrettyMIDI()
+    instrument_program = pretty_midi.instrument_name_to_program("Piano")
+    instrument = pretty_midi.Instrument(program=instrument_program)
+    first_note_start_time = notes[0][NoteAttribute.START_TIME]
+
+    for note in notes:
+        current_note = pretty_midi.Note(velocity=int(note[NoteAttribute.VELOCITY]),
+                                        pitch=int(note[NoteAttribute.NUMBER]),
+                                        start=note[NoteAttribute.START_TIME] - first_note_start_time,
+                                        end=note[NoteAttribute.START_TIME] - first_note_start_time
+                                        + note[NoteAttribute.DURATION])
+        instrument.notes.append(current_note)
+
+    midi_sequence.instruments.append(instrument)
+    return midi_sequence
+
+
 def play_midi_file(filepath):
-    playback_len = 10
     pygame.mixer.init()
     pygame.mixer.music.load(filepath)
     pygame.mixer.music.play()
-    pygame.time.wait(playback_len * 1000)
-    pygame.mixer.music.stop()
+    while pygame.mixer.music.get_busy():
+        pygame.time.wait(1000)
+    pygame.quit()
 
 
-def extract_features(midi_files):
+def extract_features(file):
     notes = []
-    for file in midi_files:
-        for instrument in file.instruments:
-            if instrument.is_drum:
-                continue
-            instrument_id = instrument.program
-            for note in instrument.notes:
-                current_note = np.zeros(N_FEATURES)
-                current_note[NoteAttribute.INSTRUMENT] = int(instrument_id)
-                current_note[NoteAttribute.NUMBER] = note.pitch
-                current_note[NoteAttribute.VELOCITY] = note.velocity
-                current_note[NoteAttribute.START_TIME] = note.start
-                current_note[NoteAttribute.DURATION] = note.end - note.start
-                notes.append(current_note)
+    resolution = file.resolution
+    minimum_rest_ticks = resolution
+    minimum_rest_duration = minimum_rest_ticks / file.estimate_tempo()
+
+    for instrument in file.instruments:
+        if instrument.is_drum:
+            continue
+        prev_note_end = 0
+
+        for note in instrument.notes:
+            # Rest note needs to be added due to pause between notes
+            pause_duration = note.start - prev_note_end
+            if pause_duration > minimum_rest_duration and prev_note_end != 0:
+                rest_note = np.zeros(N_FEATURES)
+                rest_note[NoteAttribute.NUMBER] = 0
+                rest_note[NoteAttribute.VELOCITY] = 0
+                rest_note[NoteAttribute.START_TIME] = prev_note_end
+                rest_note[NoteAttribute.DURATION] = pause_duration
+                notes.append(rest_note)
+
+            current_note = np.zeros(N_FEATURES)
+            current_note[NoteAttribute.NUMBER] = note.pitch
+            current_note[NoteAttribute.VELOCITY] = note.velocity
+            current_note[NoteAttribute.START_TIME] = note.start
+            current_note[NoteAttribute.DURATION] = note.end - note.start
+            notes.append(current_note)
+
+            prev_note_end = note.end
 
     return np.array(notes)
 
 
-def normalize_features(notes):
+def create_sequences(midi_files, sequence_length):
+    sequences = []
+
+    for midi in midi_files:
+        # Extract features from MIDI file
+        midi_notes = extract_features(midi)
+        n_notes = len(midi_notes)
+        i = 0
+        # Only add sequences of continuous notes in same song
+        while i < n_notes and n_notes - i > sequence_length:
+            sequences.append(midi_notes[i:i + sequence_length])
+            i += sequence_length
+
+    return np.array(sequences)
+
+
+def normalize_features(sequences):
     # Normalize the data
     scaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
-    instrument_ids = notes[:, NoteAttribute.INSTRUMENT]
-    normalized_instrument_ids = scaler.fit_transform(instrument_ids.reshape(-1, 1)).ravel()
-    note_numbers = notes[:, NoteAttribute.NUMBER]
-    normalized_note_numbers = scaler.fit_transform(note_numbers.reshape(-1, 1)).ravel()
-    note_start_times = notes[:, NoteAttribute.START_TIME]
-    normalized_start_times = scaler.fit_transform(note_start_times.reshape(-1, 1)).ravel()
-    note_durations = notes[:, NoteAttribute.DURATION]
-    normalized_durations = scaler.fit_transform((note_durations.reshape(-1, 1))).ravel()
-    for note in notes:
-        if note[NoteAttribute.VELOCITY] > 0:
-            note[NoteAttribute.VELOCITY] = 1
-        else:
-            note[NoteAttribute.VELOCITY] = 0
 
-    normalized_notes = np.column_stack((
-        normalized_instrument_ids, normalized_note_numbers, notes[:, NoteAttribute.VELOCITY],
-        normalized_start_times, normalized_durations))
+    note_numbers = []
+    normalized_velocities = []
+    normalized_start_times = []
+    note_durations = []
 
+    for sequence in sequences:
+        note_numbers.append(sequence[:, NoteAttribute.NUMBER])
+
+        for note in sequence:
+            if note[NoteAttribute.VELOCITY] > 0:
+                normalized_velocities.append(1)
+            else:
+                normalized_velocities.append(0)
+
+        note_start_times = sequence[:, NoteAttribute.START_TIME]
+        normalized_start_times.append(scaler.fit_transform(note_start_times.reshape(-1, 1)).ravel())
+        note_durations.append(sequence[:, NoteAttribute.DURATION])
+
+    normalized_note_numbers = scaler.fit_transform(np.array(note_numbers).reshape(-1, 1)).ravel()
+    normalized_start_times = np.array(normalized_start_times).ravel()
+    normalized_durations = scaler.fit_transform(np.array(note_durations).reshape(-1, 1)).ravel()
+
+    normalized_notes = np.column_stack((normalized_note_numbers, normalized_velocities,
+                                        normalized_start_times, normalized_durations))
     return normalized_notes
 
 

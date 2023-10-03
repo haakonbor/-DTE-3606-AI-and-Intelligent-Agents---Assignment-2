@@ -13,7 +13,7 @@ from sklearn import preprocessing
 from enum import IntEnum
 import warnings
 
-warnings.filterwarnings("error")    # To avoid loading corrupted MIDI files
+
 np.random.seed(0)   # For reproduction of results
 
 
@@ -25,6 +25,8 @@ class NoteAttribute(IntEnum):
 
 
 N_FEATURES = len(NoteAttribute)
+SEQUENCE_LEN = 16
+LATENT_SPACE_DIMENSIONS = 100
 
 
 def assignment2():
@@ -33,39 +35,138 @@ def assignment2():
     # ----------------------
 
     # --- ASSIGNMENT ---
-    # Get path of all MIDI files in directory
-    root_directory = "clean_midi"
-    filepaths = []
-    if os.path.exists(root_directory):
-        filepaths = get_all_filepaths(root_directory)
+    warnings.filterwarnings("error")  # To avoid loading corrupted MIDI files
+    normalized_sequences = load_and_preprocess_data()
+    warnings.filterwarnings("default")
+
+    discriminator = sequence_discriminator((SEQUENCE_LEN, N_FEATURES))
+    generator = sequence_generator(LATENT_SPACE_DIMENSIONS)
+    gan = sequence_gan(generator, discriminator)
+
+    train_seq_gan(generator, discriminator, gan, normalized_sequences, LATENT_SPACE_DIMENSIONS, 100, 256)
+
+
+def sequence_discriminator(input_structure):
+    discriminator_model = models.Sequential(name="DISCRIMINATOR")
+
+    # Hidden layer 1
+    discriminator_model.add(layers.Flatten(input_shape=input_structure))
+    discriminator_model.add(layers.Dense(64, activation='relu'))
+    # discriminator_model.add(layers.LeakyReLU(alpha=0.2))
+    discriminator_model.add(layers.Dropout(0.2))
+
+    # Hidden layer 2
+    discriminator_model.add(layers.Dense(64, activation='relu'))
+    # discriminator_model.add(layers.LeakyReLU(alpha=0.2))
+    discriminator_model.add(layers.Dropout(0.2))
+
+    discriminator_model.add(layers.Dense(1, activation='relu'))
+
+    optimization = optimizers.Adam(learning_rate=0.0002, beta_1=0.5)
+    discriminator_model.compile(loss='binary_crossentropy', optimizer=optimization, metrics=['accuracy'])
+
+    discriminator_model.summary()
+    plot_model(discriminator_model, to_file="seq_discriminator_model.png", show_shapes=True, show_layer_names=True)
+
+    return discriminator_model
+
+
+def sequence_generator(latent_space_dim):
+    generator_model = models.Sequential(name="GENERATOR")
+
+    generator_model.add(layers.Dense(N_FEATURES * SEQUENCE_LEN / 4, input_dim=latent_space_dim, activation='relu'))
+    generator_model.add(layers.Dense(N_FEATURES * SEQUENCE_LEN / 2, input_dim=latent_space_dim, activation='relu'))
+    generator_model.add(layers.Dense(N_FEATURES * SEQUENCE_LEN, input_dim=latent_space_dim, activation='relu'))
+    generator_model.add(layers.Reshape((16, 4)))
+
+    generator_model.summary()
+    plot_model(generator_model, to_file="seq_generator_model.png", show_shapes=True, show_layer_names=True)
+
+    return generator_model
+
+
+def sequence_gan(generator, discriminator):
+    discriminator.trainable = False
+    gan_model = models.Sequential()
+    gan_model.add(generator)
+    gan_model.add(discriminator)
+    optimization = optimizers.Adam(learning_rate=0.0002, beta_1=0.5)
+    gan_model.compile(loss='binary_crossentropy', optimizer=optimization)
+
+    gan_model.summary()
+    plot_model(gan_model, to_file="seq_gan_model.png", show_shapes=True, show_layer_names=True)
+    return gan_model
+
+
+def generate_fake_sequence_samples(generator, latent_space_dim, samples):
+    points = generate_latent_points(latent_space_dim, samples)
+    x = generator.predict(points).reshape(samples, 16, 4)
+    y = np.zeros((samples, 1))
+    return x, y
+
+
+def train_seq_gan(generator, discriminator, gan, sequences, latent_space_dim, episodes, batch_size):
+    batch_per_episode = int(sequences.shape[0] / batch_size)
+    half_batch = int(batch_size / 2)
+
+    for episode in range(episodes):
+        for i in range(batch_per_episode):
+            x_real, y_real = generate_real_samples(sequences, half_batch)
+            x_fake, y_fake = generate_fake_sequence_samples(generator, latent_space_dim, half_batch)
+
+            x_discriminator, y_discriminator = np.vstack((x_real, x_fake)), np.vstack((y_real, y_fake))
+            discriminator_loss, _ = discriminator.train_on_batch(x_discriminator, y_discriminator)
+
+            x_gan = generate_latent_points(latent_space_dim, batch_size)
+            y_gan = np.ones((batch_size, 1))
+            gan_loss = gan.train_on_batch(x_gan, y_gan)
+
+            print(f'Episode {episode + 1}, {i}/{batch_per_episode}  Discriminator loss: '
+                  f'{discriminator_loss}    GAN loss: {gan_loss}')
+
+        if (episode + 1) % 10 == 0:
+            summarize_performance(episode, generator, discriminator, sequences, latent_space_dim)
+
+
+def load_and_preprocess_data():
+    data_filename = 'sequence_data.npy'
+    if os.path.exists(data_filename):
+        return np.load(data_filename)
+
     else:
-        print(f"Root directory {root_directory} not valid")
+        # Get path of all MIDI files in directory
+        root_directory = "clean_midi"
+        filepaths = []
+        if os.path.exists(root_directory):
+            filepaths = get_all_filepaths(root_directory)
+        else:
+            print(f"Root directory {root_directory} not valid")
 
-    # Load MIDI files
-    n_files = 2
-    midi_files = load_midi_files(filepaths, n_files)
+        # Load MIDI files
+        n_files = 1000
+        midi_files = load_midi_files(filepaths[:n_files])
 
-    # Create sequences of fixed amount of notes
-    sequence_length = 16
-    sequences = create_sequences(midi_files, sequence_length)
+        # Create sequences of fixed amount of notes
+        sequences = create_sequences(midi_files, SEQUENCE_LEN)
 
-    # Play example sequence
-    # sequence_midi = create_midi_sequence(sequences[0])
-    # sequence_filepath = "first_sequence_example.mid"
-    # sequence_midi.write(sequence_filepath)
-    # play_midi_file(sequence_filepath)
+        # Play example sequence
+        # sequence_midi = create_midi_sequence(sequences[0])
+        # sequence_filepath = "first_sequence_example.mid"
+        # sequence_midi.write(sequence_filepath)
+        # play_midi_file(sequence_filepath)
 
-    # Normalize the features
-    normalized_notes = normalize_features(sequences)
-    normalized_sequences = []
-    i = 0
-    while i < len(normalized_notes):
-        normalized_sequences.append(normalized_notes[i:i+sequence_length])
-        i += sequence_length
-    normalized_sequences = np.array(normalized_sequences)
+        # Normalize the features
+        normalized_notes = normalize_features(sequences)
+        normalized_sequences = []
+        i = 0
+        while i < len(normalized_notes):
+            normalized_sequences.append(normalized_notes[i:i + SEQUENCE_LEN])
+            i += SEQUENCE_LEN
+        normalized_sequences = np.array(normalized_sequences)
 
-    random_samples = generate_real_samples(normalized_sequences, 5)
-    print(random_samples)
+        np.save(data_filename, normalized_sequences)
+
+        return normalized_sequences
 
 
 def get_all_filepaths(directory):
@@ -79,16 +180,15 @@ def get_all_filepaths(directory):
     return filepaths
 
 
-def load_midi_files(filepaths, n_files):
+def load_midi_files(filepaths):
     midi_files = []
-    current_n_files = 0
+    n_files = len(filepaths)
     i = 0
-    while current_n_files < n_files:
+    for file in filepaths:
         try:
-            midi_files.append(pretty_midi.PrettyMIDI(filepaths[i]))
-            print(f"READING FILE: {filepaths[i]}")
-            print(f'{((current_n_files + 1) / n_files) * 100}%')
-            current_n_files += 1
+            midi_files.append(pretty_midi.PrettyMIDI(file))
+            print(f"READING FILE: {file}")
+            print(f'{(((i + 1) / n_files) * 100): .2f} %')
         except Exception as e:
             print(f'ERROR READING MIDI FILE: {e}')
         i += 1
@@ -122,16 +222,22 @@ def play_midi_file(filepath):
     pygame.quit()
 
 
-def extract_features(file):
+def extract_features(file, sequence_length):
+    try:
+        tempo = file.estimate_tempo()
+    except ValueError:      # File has less than two notes so can't estimate tempo
+        return []
+
     notes = []
     resolution = file.resolution
     minimum_rest_ticks = resolution
-    minimum_rest_duration = minimum_rest_ticks / file.estimate_tempo()
+    minimum_rest_duration = minimum_rest_ticks / tempo
 
     for instrument in file.instruments:
-        if instrument.is_drum:
+        if instrument.is_drum or len(instrument.notes) < sequence_length:
             continue
         prev_note_end = 0
+        instrument_notes = []
 
         for note in instrument.notes:
             # Rest note needs to be added due to pause between notes
@@ -142,18 +248,22 @@ def extract_features(file):
                 rest_note[NoteAttribute.VELOCITY] = 0
                 rest_note[NoteAttribute.START_TIME] = prev_note_end
                 rest_note[NoteAttribute.DURATION] = pause_duration
-                notes.append(rest_note)
+
+                instrument_notes.append(rest_note)
 
             current_note = np.zeros(N_FEATURES)
             current_note[NoteAttribute.NUMBER] = note.pitch
             current_note[NoteAttribute.VELOCITY] = note.velocity
             current_note[NoteAttribute.START_TIME] = note.start
             current_note[NoteAttribute.DURATION] = note.end - note.start
-            notes.append(current_note)
+
+            instrument_notes.append(current_note)
 
             prev_note_end = note.end
 
-    return np.array(notes)
+        notes.append(instrument_notes)
+
+    return notes
 
 
 def create_sequences(midi_files, sequence_length):
@@ -161,13 +271,14 @@ def create_sequences(midi_files, sequence_length):
 
     for midi in midi_files:
         # Extract features from MIDI file
-        midi_notes = extract_features(midi)
-        n_notes = len(midi_notes)
-        i = 0
-        # Only add sequences of continuous notes in same song
-        while i < n_notes and n_notes - i > sequence_length:
-            sequences.append(midi_notes[i:i + sequence_length])
-            i += sequence_length
+        midi_notes = extract_features(midi, sequence_length)
+        # Only add sequences of continuous notes of same instrument
+        for instrument_notes in midi_notes:
+            n_notes = len(instrument_notes)
+            i = 0
+            while i < n_notes and n_notes - i > sequence_length:
+                sequences.append(instrument_notes[i:i + sequence_length])
+                i += sequence_length
 
     return np.array(sequences)
 
@@ -247,7 +358,7 @@ def summarize_performance(episode, generator_model, discriminator_model, dataset
 
     print(f'Real samples accuracy: {accuracy_real * 100}%  Fake samples accuracy: {accuracy_fake * 100}%')
 
-    save_plot(x_fake, episode)
+    # save_plot(x_fake, episode)
     filename = f'generator_model_{episode + 1}.h5'
     generator_model.save(filename)
     plt.close()

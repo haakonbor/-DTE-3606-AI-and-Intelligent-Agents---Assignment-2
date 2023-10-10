@@ -72,10 +72,10 @@ def sequence_generator(latent_space_dim):
 def generator_conv(latent_space_dim):
     generator_model = models.Sequential(name="GENERATOR_CONV")
 
-    generator_model.add(layers.Dense(N_FEATURES/2 * SEQUENCE_LEN/2 * 1024, input_dim=latent_space_dim))
+    generator_model.add(layers.Dense(N_FEATURES / 2 * SEQUENCE_LEN / 2 * 1024, input_dim=latent_space_dim))
     generator_model.add(layers.BatchNormalization())
     generator_model.add(layers.LeakyReLU(alpha=0.2))
-    generator_model.add(layers.Reshape((int(SEQUENCE_LEN / 4), int(N_FEATURES / 4), 1024)))
+    generator_model.add(layers.Reshape((int(SEQUENCE_LEN / 2), int(N_FEATURES / 2), 1024)))
 
     generator_model.add(layers.Conv2DTranspose(512, (5, 5), strides=(2, 2), padding='same'))
     generator_model.add(layers.BatchNormalization())
@@ -105,7 +105,7 @@ def discriminator_conv(input_structure):
     discriminator_model.compile(loss='binary_crossentropy', optimizer=optimization, metrics=['accuracy'])
 
     discriminator_model.summary()
-    plot_model(discriminator_model, to_file='discriminator_model.png', show_shapes=True, show_layer_names=True)
+    plot_model(discriminator_model, to_file='conv_discriminator_model.png', show_shapes=True, show_layer_names=True)
 
     return discriminator_model
 
@@ -152,7 +152,7 @@ def summarize_performance(episode, generator_model, discriminator_model, sequenc
     print(f'Real samples accuracy: {accuracy_real * 100}%  Fake samples accuracy: {accuracy_fake * 100}%')
 
     # save_plot(x_fake, episode)
-    filename = f'generator_model_{episode + 1}.h5'
+    filename = f'GAN_models_{SEQUENCE_LEN}/generator_model_{episode + 1}.h5'
     generator_model.save(filename)
     plt.close()
 

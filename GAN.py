@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 from keras import layers, models, optimizers
 from keras.utils import plot_model
 import numpy as np
-from main import N_FEATURES, SEQUENCE_LEN
+from main import N_FEATURES, SEQUENCE_LEN, MODEL_TYPE
 
 
 def plot_accuracy(acc_real, acc_fake, epochs):
@@ -152,7 +152,7 @@ def summarize_performance(episode, generator_model, discriminator_model, sequenc
     print(f'Real samples accuracy: {accuracy_real * 100}%  Fake samples accuracy: {accuracy_fake * 100}%')
 
     # save_plot(x_fake, episode)
-    filename = f'GAN_models_{SEQUENCE_LEN}/generator_model_{episode + 1}.h5'
+    filename = f'GAN_models_{SEQUENCE_LEN}/{MODEL_TYPE}/generator_model_{episode + 1}.h5'
     generator_model.save(filename)
     plt.close()
 

@@ -9,7 +9,7 @@ from GAN import *
 
 class NoteAttribute(IntEnum):
     NUMBER = 0
-    DURATION = 1
+    VELOCITY = 1
 
 
 N_FILES = 10
@@ -17,12 +17,13 @@ N_FEATURES = len(NoteAttribute)
 SEQUENCE_LEN = 16
 LATENT_SPACE_DIMENSIONS = 100
 
-MIN_PITCH = 0
-MAX_PITCH = 127
-MIN_DURATION = 0
-MAX_DURATION = 0
+OLD_MIN = 0
+OLD_MAX = 127
+
 SCALER_MIN = -1
 SCALER_MAX = 1
+
+MODEL_TYPE = "DENSE"
 
 np.random.seed(0)   # For reproduction of results
 
@@ -37,23 +38,25 @@ def assignment2():
     # example_sequence.write(firs_sequence_midi_path)
     # play_midi_file(firs_sequence_midi_path)
 
-    # Dense layers
-    # discriminator = sequence_discriminator((SEQUENCE_LEN, N_FEATURES))
-    # generator = sequence_generator(LATENT_SPACE_DIMENSIONS)
+    if MODEL_TYPE == "DENSE":
+        # Dense layers
+        discriminator = sequence_discriminator((SEQUENCE_LEN, N_FEATURES))
+        generator = sequence_generator(LATENT_SPACE_DIMENSIONS)
 
-    # CNN
-    discriminator = discriminator_conv((SEQUENCE_LEN, N_FEATURES, 1))
-    generator = generator_conv(LATENT_SPACE_DIMENSIONS)
+    else:
+        # CNN
+        discriminator = discriminator_conv((SEQUENCE_LEN, N_FEATURES, 1))
+        generator = generator_conv(LATENT_SPACE_DIMENSIONS)
 
     # GAN model
     gan = sequence_gan(generator, discriminator)
 
     n_epochs = 100
     batch_size = 128
-    # accuracy_real, accuracy_fake = train_seq_gan(
-    #     generator, discriminator, gan, normalized_sequences, LATENT_SPACE_DIMENSIONS, n_epochs, batch_size)
+    accuracy_real, accuracy_fake = train_seq_gan(
+        generator, discriminator, gan, normalized_sequences, LATENT_SPACE_DIMENSIONS, n_epochs, batch_size)
 
-    # plot_accuracy(accuracy_real, accuracy_fake, n_epochs)
+    plot_accuracy(accuracy_real, accuracy_fake, n_epochs)
 
     n_generated_samples = 5
     epochs = [1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
@@ -80,7 +83,7 @@ def sequence_statistics(n, epoch_set):
         generated_sequences_pitch_entropies = np.zeros(n)
         for i in range(n):
             generated_sequence_score = muspy.read_midi(
-                f"generated_midi_{SEQUENCE_LEN}/model_{epoch}_generated_sequence_{i}.mid")
+                f"generated_midi_{SEQUENCE_LEN}/{MODEL_TYPE}/model_{epoch}_generated_sequence_{i}.mid")
             generated_sequences_pitches[i] = muspy.n_pitches_used(generated_sequence_score)
             generated_sequences_pitch_ranges[i] = muspy.pitch_range(generated_sequence_score)
             generated_sequences_pitch_entropies[i] = muspy.pitch_entropy(generated_sequence_score)
@@ -94,15 +97,16 @@ def sequence_statistics(n, epoch_set):
 
 def generate_new_sequences(n, model_epoch):
     latent_points = generate_latent_points(LATENT_SPACE_DIMENSIONS, n)
-    generator = models.load_model(f'GAN_models_{SEQUENCE_LEN}/generator_model_{model_epoch}.h5')
+    generator = models.load_model(f'GAN_models_{SEQUENCE_LEN}/{MODEL_TYPE}/generator_model_{model_epoch}.h5')
     x = np.squeeze(generator.predict(latent_points))
 
     for i, generated_sequence in enumerate(x):
         sequence = []
         for note in generated_sequence:
-            sequence.append([int(un_normalize_pitch(note[NoteAttribute.NUMBER])), un_normalize_duration(note[NoteAttribute.DURATION])])
+            sequence.append([int(un_normalize(note[NoteAttribute.NUMBER])),
+                             int(un_normalize(note[NoteAttribute.VELOCITY]))])
         sequence_midi = create_midi_sequence(sequence)
-        sequence_filepath = f"generated_midi_{SEQUENCE_LEN}/model_{model_epoch}_generated_sequence_{i}.mid"
+        sequence_filepath = f"generated_midi_{SEQUENCE_LEN}/{MODEL_TYPE}/model_{model_epoch}_generated_sequence_{i}.mid"
         sequence_midi.write(sequence_filepath)
         # play_midi_file(sequence_filepath)
 
@@ -180,25 +184,11 @@ def define_sequences(midi_files, sequence_length):
 
 
 def normalize_sequences(sequences):
-    global MIN_DURATION
-    global MAX_DURATION
-
-    durations = np.zeros(SEQUENCE_LEN * len(sequences))
-    n = 0
-
-    for seq in sequences:
-        for note in seq:
-            durations[n] = note[NoteAttribute.DURATION]
-            n += 1
-
-    MIN_DURATION = np.min(durations)
-    MAX_DURATION = np.max(durations)
-
     normalized_sequences = np.copy(sequences)
     for i, seq in enumerate(sequences):
         for j, note in enumerate(seq):
-            normalized_sequences[i][j][NoteAttribute.NUMBER] = normalize_pitch(note[NoteAttribute.NUMBER])
-            normalized_sequences[i][j][NoteAttribute.DURATION] = normalize_duration(note[NoteAttribute.DURATION])
+            normalized_sequences[i][j][NoteAttribute.NUMBER] = normalize(note[NoteAttribute.NUMBER])
+            normalized_sequences[i][j][NoteAttribute.VELOCITY] = normalize(note[NoteAttribute.VELOCITY])
 
     return normalized_sequences
 
@@ -208,14 +198,14 @@ def create_midi_sequence(notes):
     instrument_program = pretty_midi.instrument_name_to_program("Electric Piano 1")
     instrument = pretty_midi.Instrument(program=instrument_program)
     current_time = 0
-    # step = 0.5
+    step = 0.5
 
     for note in notes:
-        current_note = pretty_midi.Note(velocity=80,
+        current_note = pretty_midi.Note(velocity=note[NoteAttribute.VELOCITY],
                                         pitch=note[NoteAttribute.NUMBER],
                                         start=current_time,
-                                        end=current_time + note[NoteAttribute.DURATION])
-        current_time += note[NoteAttribute.DURATION]
+                                        end=current_time + step)
+        current_time += step
         instrument.notes.append(current_note)
 
     midi_sequence.instruments.append(instrument)
@@ -241,10 +231,7 @@ def extract_features(file, sequence_length):
         for note in instrument.notes:
             current_note = np.zeros(N_FEATURES)
             current_note[NoteAttribute.NUMBER] = note.pitch
-            current_note[NoteAttribute.DURATION] = note.end - note.start
-
-            if current_note[NoteAttribute.DURATION] > 5:
-                continue
+            current_note[NoteAttribute.VELOCITY] = note.velocity
 
             instrument_notes.append(current_note)
 
@@ -253,20 +240,12 @@ def extract_features(file, sequence_length):
     return notes
 
 
-def normalize_pitch(value):
-    return ((value - MIN_PITCH) / (MAX_PITCH - MIN_PITCH)) * (SCALER_MAX - SCALER_MIN) + SCALER_MIN
+def normalize(value):
+    return ((value - OLD_MIN) / (OLD_MAX - OLD_MIN)) * (SCALER_MAX - SCALER_MIN) + SCALER_MIN
 
 
-def un_normalize_pitch(scaled_value):
-    return ((scaled_value - SCALER_MIN) / (SCALER_MAX - SCALER_MIN)) * (MAX_PITCH - MIN_PITCH) + MIN_PITCH
-
-
-def normalize_duration(value):
-    return ((value - MIN_DURATION) / (MAX_DURATION - MIN_DURATION)) * (SCALER_MAX - SCALER_MIN) + SCALER_MIN
-
-
-def un_normalize_duration(scaled_value):
-    return ((scaled_value - SCALER_MIN) / (SCALER_MAX - SCALER_MIN)) * (MAX_DURATION - MIN_DURATION) + MIN_DURATION
+def un_normalize(scaled_value):
+    return ((scaled_value - SCALER_MIN) / (SCALER_MAX - SCALER_MIN)) * (OLD_MAX - OLD_MIN) + OLD_MIN
 
 
 if __name__ == '__main__':

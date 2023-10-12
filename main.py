@@ -1,3 +1,5 @@
+import matplotlib.pyplot as plt
+import numpy as np
 import pretty_midi
 import muspy
 import os
@@ -77,22 +79,45 @@ def sequence_statistics(n, epoch_set):
         f"number of pitches: {example_sequence_pitches}, pitch range: {example_sequence_pitch_range}, "
         f"pitch entropy: {example_sequence_pitch_entropy} \n")
 
-    for epoch in epoch_set:
-        generated_sequences_pitches = np.zeros(n)
-        generated_sequences_pitch_ranges = np.zeros(n)
-        generated_sequences_pitch_entropies = np.zeros(n)
-        for i in range(n):
-            generated_sequence_score = muspy.read_midi(
-                f"generated_midi_{SEQUENCE_LEN}/{MODEL_TYPE}/model_{epoch}_generated_sequence_{i}.mid")
-            generated_sequences_pitches[i] = muspy.n_pitches_used(generated_sequence_score)
-            generated_sequences_pitch_ranges[i] = muspy.pitch_range(generated_sequence_score)
-            generated_sequences_pitch_entropies[i] = muspy.pitch_entropy(generated_sequence_score)
+    generated_sequences_pitches = np.zeros((len(epoch_set), n))
+    generated_sequences_pitch_ranges = np.zeros((len(epoch_set), n))
+    generated_sequences_pitch_entropies = np.zeros((len(epoch_set), n))
 
-        print(
-            f"GAN model at epoch {epoch} generated sequences average:"
-            f"number of pitches: {np.mean(generated_sequences_pitches)}, "
-            f"pitch range: {np.mean(generated_sequences_pitch_ranges)}, "
-            f"pitch entropy: {np.mean(generated_sequences_pitch_entropies)} \n")
+    for i, epoch in enumerate(epoch_set):
+        for j in range(n):
+            generated_sequence_score = muspy.read_midi(
+                f"generated_midi_{SEQUENCE_LEN}/{MODEL_TYPE}/model_{epoch}_generated_sequence_{j}.mid")
+            generated_sequences_pitches[i][j] = muspy.n_pitches_used(generated_sequence_score)
+            generated_sequences_pitch_ranges[i][j] = muspy.pitch_range(generated_sequence_score)
+            generated_sequences_pitch_entropies[i][j] = muspy.pitch_entropy(generated_sequence_score)
+
+    average_pitches = [np.mean(episode) for episode in generated_sequences_pitches]
+    average_pitch_ranges = [np.mean(episode) for episode in generated_sequences_pitch_ranges]
+    average_pitch_entropies = [np.mean(episode) for episode in generated_sequences_pitch_entropies]
+
+    fig, ax = plt.subplots()
+    ax.plot(epoch_set, generated_sequences_pitches, label="Generated sequence")
+    ax.plot(epoch_set, average_pitches, linestyle=':', label="Average generated sequence")
+    ax.axhline(y=example_sequence_pitches, linestyle='--', label="Example sequence")
+    plt.xlabel("Episode")
+    plt.ylabel("Number of notes")
+    plt.show()
+
+    fig, ax = plt.subplots()
+    ax.plot(epoch_set, generated_sequences_pitch_ranges, label="Generated sequence")
+    ax.plot(epoch_set, average_pitch_ranges, linestyle=':', label="Average generated sequence")
+    ax.axhline(y=example_sequence_pitch_range, linestyle='--', label="Example sequence")
+    plt.xlabel("Episode")
+    plt.ylabel("Pitch range")
+    plt.show()
+
+    fig, ax = plt.subplots()
+    ax.plot(epoch_set, generated_sequences_pitch_entropies, label="Generated sequence")
+    ax.plot(epoch_set, average_pitch_entropies, linestyle=':', label="Average generated sequence")
+    ax.axhline(y=example_sequence_pitch_entropy, linestyle='--', label="Example sequence")
+    plt.xlabel("Episode")
+    plt.ylabel("Pitch entropy")
+    plt.show()
 
 
 def generate_new_sequences(n, model_epoch):

@@ -10,10 +10,10 @@ def plot_accuracy(acc_real, acc_fake, epochs):
     y = acc_real, acc_fake
 
     fig, ax = plt.subplots(1)
-    ax.plot(x, y[0])
+    ax.plot(x, y[0], label="Real accuracy")
     ax.set_xlabel('Epochs')
     ax.set_ylabel('Discriminator accuracy')
-    ax.plot(x, y[1])
+    ax.plot(x, y[1], label="Fake accuracy")
     plt.show()
 
 
